@@ -7,84 +7,87 @@ import { FaHeart, FaRegHeart, FaRegComment, FaEllipsisH } from "react-icons/fa";
 import { useAuth } from "../../context/AuthContext";
 import CommentList from "./CommentList";
 
-const PostCard = ({ post, onLike, onUnlike, onCommentSubmit }) => {
+const PostCard = ({ post, onLike, onUnlike, onCommentSubmit, isLiked }) => {
     const { user } = useAuth();
     const [comment, setComment] = useState("");
     const [showComments, setShowComments] = useState(false);
     const [showMenu, setShowMenu] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [localIsLiked, setLocalIsLiked] = useState(isLiked); // Local state for immediate UI updates
     const commentInputRef = useRef(null);
 
-    // Safety check - if post is undefined or null, don't render anything
-    if (!post) {
-        console.error("PostCard received undefined or null post");
-        return null;
-    }
-
-    // Ensure all post properties exist with defaults to prevent errors
-    const {
-        _id = "",
-        user: postUser = { profilePicture: "", username: "" },
-        caption = "",
-        mediaUrl = "",
-        mediaType = "image",
-        location = "",
-        createdAt = new Date(),
-        likes = [],
-        comments = [],
-        hashtags = [],
-    } = post;
-
-    // Add defensive check for post.likes to ensure it exists and is an array
-    const isLiked =
-        Array.isArray(likes) && user ? likes.includes(user._id) : false;
+    // Update local state when prop changes
+    React.useEffect(() => {
+        setLocalIsLiked(isLiked);
+    }, [isLiked]);
 
     const handleLikeToggle = () => {
-        if (!post || !user) return;
+        // Update UI immediately for better user experience
+        setLocalIsLiked(!localIsLiked);
 
-        if (isLiked) {
-            onUnlike(_id);
+        if (localIsLiked) {
+            onUnlike(post._id);
         } else {
-            onLike(_id);
+            onLike(post._id);
         }
     };
 
     const handleCommentFocus = () => {
-        if (commentInputRef.current) {
-            commentInputRef.current.focus();
-        }
+        commentInputRef.current.focus();
     };
 
     const handleCommentSubmit = async (e) => {
         e.preventDefault();
-        if (!comment.trim() || !user) return;
+        if (!comment.trim() || isSubmitting) return;
 
         try {
-            await onCommentSubmit(_id, comment);
+            setIsSubmitting(true);
+            console.log(`Submitting comment to post ${post._id}: ${comment}`);
+
+            await onCommentSubmit(post._id, comment);
+
+            // Clear the comment input and show comments after successful submission
             setComment("");
             setShowComments(true);
         } catch (error) {
             console.error("Error submitting comment:", error);
+            // Error handling is done in the parent component
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
     const formatTimestamp = (timestamp) => {
-        return formatDistanceToNow(new Date(timestamp), { addSuffix: true });
+        try {
+            return formatDistanceToNow(new Date(timestamp), {
+                addSuffix: true,
+            });
+        } catch (error) {
+            console.error("Invalid date format:", timestamp);
+            return "recently";
+        }
     };
+
+    // Handle cases where post properties might be undefined
+    const postUser = post.user || {};
+    const postComments = Array.isArray(post.comments) ? post.comments : [];
+    const postHashtags = Array.isArray(post.hashtags) ? post.hashtags : [];
+
+    // Get likes count safely
+    const likesCount = Array.isArray(post.likes) ? post.likes.length : 0;
 
     return (
         <PostCardContainer>
             <PostHeader>
                 <UserInfo>
                     <UserAvatar
-                        src={postUser.profilePicture}
+                        src={postUser.profilePicture || "/default-avatar.png"}
                         alt={postUser.username}
                     />
-                    <div>
-                        <Username to={`/${postUser.username}`}>
-                            {postUser.username}
-                        </Username>
-                        {location && <Location>{location}</Location>}
-                    </div>
+                    <Username to={`/${postUser.username}`}>
+                        {postUser.username}
+                    </Username>
+                    {post.location && <Location>{post.location}</Location>}
                 </UserInfo>
                 <MenuButton onClick={() => setShowMenu(!showMenu)}>
                     <FaEllipsisH />
@@ -92,44 +95,29 @@ const PostCard = ({ post, onLike, onUnlike, onCommentSubmit }) => {
                 {showMenu && (
                     <MenuDropdown>
                         <MenuItem>Report</MenuItem>
-                        {user && postUser._id === user._id && (
+                        {postUser._id === user?._id && (
                             <MenuItem>Delete</MenuItem>
                         )}
-                        <MenuItem onClick={() => setShowMenu(false)}>
-                            Cancel
-                        </MenuItem>
                     </MenuDropdown>
                 )}
             </PostHeader>
 
             <PostMedia>
-                {mediaType === "image" ? (
-                    <PostImage
-                        src={mediaUrl}
-                        alt="Post"
-                        onError={(e) => {
-                            console.error("Image failed to load:", mediaUrl);
-                            e.target.src =
-                                "https://via.placeholder.com/600x400?text=Image+Not+Found";
-                        }}
-                    />
+                {post.mediaType === "image" ? (
+                    <PostImage src={post.mediaUrl} alt="Post" />
                 ) : (
-                    <PostVideo
-                        src={mediaUrl}
-                        controls
-                        onError={(e) => {
-                            console.error("Video failed to load:", mediaUrl);
-                            e.target.parentNode.innerHTML =
-                                '<div style="display:flex;align-items:center;justify-content:center;height:400px;background:#f5f5f5;color:#888;">Video Not Available</div>';
-                        }}
-                    />
+                    <PostVideo src={post.mediaUrl} controls />
                 )}
             </PostMedia>
 
             <PostActions>
                 <ActionButtons>
                     <ActionButton onClick={handleLikeToggle}>
-                        {isLiked ? <FaHeart color="#ed4956" /> : <FaRegHeart />}
+                        {localIsLiked ? (
+                            <FaHeart color="#ed4956" />
+                        ) : (
+                            <FaRegHeart />
+                        )}
                     </ActionButton>
                     <ActionButton onClick={handleCommentFocus}>
                         <FaRegComment />
@@ -137,26 +125,24 @@ const PostCard = ({ post, onLike, onUnlike, onCommentSubmit }) => {
                 </ActionButtons>
 
                 <LikesCount>
-                    {!Array.isArray(likes) || likes.length === 0
+                    {likesCount === 0
                         ? "Be the first to like this"
-                        : likes.length === 1
+                        : likesCount === 1
                         ? "1 like"
-                        : `${likes.length} likes`}
+                        : `${likesCount} likes`}
                 </LikesCount>
             </PostActions>
 
-            {caption && (
-                <PostCaption>
-                    <Username to={`/${postUser.username}`}>
-                        {postUser.username}
-                    </Username>
-                    <Caption>{caption}</Caption>
-                </PostCaption>
-            )}
+            <PostCaption>
+                <Username to={`/${postUser.username}`}>
+                    {postUser.username}
+                </Username>
+                <Caption>{post.caption}</Caption>
+            </PostCaption>
 
-            {Array.isArray(hashtags) && hashtags.length > 0 && (
+            {postHashtags.length > 0 && (
                 <Hashtags>
-                    {hashtags.map((tag, index) => (
+                    {postHashtags.map((tag, index) => (
                         <Hashtag
                             key={index}
                             to={`/hashtag/${tag.replace("#", "")}`}
@@ -167,19 +153,21 @@ const PostCard = ({ post, onLike, onUnlike, onCommentSubmit }) => {
                 </Hashtags>
             )}
 
-            {Array.isArray(comments) && comments.length > 0 && (
+            {postComments.length > 0 && (
                 <ViewCommentsButton
                     onClick={() => setShowComments(!showComments)}
                 >
                     {showComments
                         ? "Hide comments"
-                        : `View all ${comments.length} comments`}
+                        : `View all ${postComments.length} comments`}
                 </ViewCommentsButton>
             )}
 
-            {showComments && <CommentList comments={comments} />}
+            {showComments && <CommentList comments={postComments} />}
 
-            <PostTimestamp>{formatTimestamp(createdAt)}</PostTimestamp>
+            <PostTimestamp>
+                {post.createdAt && formatTimestamp(post.createdAt)}
+            </PostTimestamp>
 
             <CommentForm onSubmit={handleCommentSubmit}>
                 <CommentInput
@@ -188,9 +176,13 @@ const PostCard = ({ post, onLike, onUnlike, onCommentSubmit }) => {
                     placeholder="Add a comment..."
                     value={comment}
                     onChange={(e) => setComment(e.target.value)}
+                    disabled={isSubmitting}
                 />
-                <PostButton type="submit" disabled={!comment.trim()}>
-                    Post
+                <PostButton
+                    type="submit"
+                    disabled={!comment.trim() || isSubmitting}
+                >
+                    {isSubmitting ? "Posting..." : "Post"}
                 </PostButton>
             </CommentForm>
         </PostCardContainer>
@@ -242,7 +234,6 @@ const Username = styled(Link)`
 const Location = styled.span`
     font-size: 12px;
     color: #8e8e8e;
-    display: block;
 `;
 
 const MenuButton = styled.button`
@@ -293,7 +284,6 @@ const PostMedia = styled.div`
     display: flex;
     justify-content: center;
     align-items: center;
-    max-height: 600px;
 `;
 
 const PostImage = styled.img`

@@ -2,7 +2,8 @@
 import React, { useEffect, useState } from "react";
 import styled from "styled-components";
 import { toast } from "react-toastify";
-import { postService, storyService } from "../services/api";
+// Import the services correctly
+import { postService, storyService, commentService } from "../services/api";
 import PostCard from "../components/post/PostCard";
 import StoryCircles from "../components/story/StoryCircles";
 import SuggestedUsers from "../components/profile/SuggestedUsers";
@@ -59,26 +60,82 @@ const Feed = () => {
         fetchFeedData();
     }, []);
 
+    // Check if a post is liked by the current user
+    const isPostLikedByUser = (post) => {
+        // Make sure we have a user and the post has likes
+        if (!user || !post.likes) return false;
+
+        // Handle different possible data structures for likes
+        // Case 1: likes is an array of user IDs
+        if (typeof post.likes[0] === "string") {
+            return post.likes.includes(user._id);
+        }
+
+        // Case 2: likes is an array of user objects with _id property
+        if (post.likes[0] && post.likes[0]._id) {
+            return post.likes.some((like) => like._id === user._id);
+        }
+
+        // Case 3: likes might be an array of objects with user property
+        if (post.likes[0] && post.likes[0].user) {
+            return post.likes.some(
+                (like) =>
+                    (typeof like.user === "string" && like.user === user._id) ||
+                    like.user._id === user._id
+            );
+        }
+
+        return false;
+    };
+
     const handleLikePost = async (postId) => {
         if (!user) return;
+
+        // Find the post
+        const post = posts.find((p) => p._id === postId);
+
+        // If post is already liked, don't proceed
+        if (post && isPostLikedByUser(post)) {
+            console.log("Post already liked, skipping like action");
+            return;
+        }
 
         try {
             console.log(`Liking post ${postId}`);
             await postService.likePost(postId);
+
+            // Update posts state based on backend response structure
             setPosts(
-                posts.map((post) =>
-                    post._id === postId
-                        ? {
-                              ...post,
-                              likes: [
-                                  ...(Array.isArray(post.likes)
-                                      ? post.likes
-                                      : []),
-                                  user._id,
-                              ],
-                          }
-                        : post
-                )
+                posts.map((post) => {
+                    if (post._id === postId) {
+                        // Create a new likes array with the updated like
+                        // Check if likes is an array of IDs or objects
+                        let updatedLikes;
+
+                        if (!post.likes || post.likes.length === 0) {
+                            // If likes is empty, start a new array
+                            updatedLikes = [{ _id: user._id }];
+                        } else if (typeof post.likes[0] === "string") {
+                            // If likes is an array of IDs
+                            updatedLikes = [...post.likes, user._id];
+                        } else if (post.likes[0] && post.likes[0]._id) {
+                            // If likes is an array of user objects with _id
+                            updatedLikes = [...post.likes, { _id: user._id }];
+                        } else if (post.likes[0] && post.likes[0].user) {
+                            // If likes is an array of objects with user property
+                            updatedLikes = [...post.likes, { user: user._id }];
+                        } else {
+                            // Default case, assume object with _id
+                            updatedLikes = [...post.likes, { _id: user._id }];
+                        }
+
+                        return {
+                            ...post,
+                            likes: updatedLikes,
+                        };
+                    }
+                    return post;
+                })
             );
         } catch (err) {
             console.error("Error liking post:", err);
@@ -89,20 +146,58 @@ const Feed = () => {
     const handleUnlikePost = async (postId) => {
         if (!user) return;
 
+        // Find the post
+        const post = posts.find((p) => p._id === postId);
+
+        // If post is not liked, don't proceed
+        if (post && !isPostLikedByUser(post)) {
+            console.log("Post not liked, skipping unlike action");
+            return;
+        }
+
         try {
             console.log(`Unliking post ${postId}`);
             await postService.unlikePost(postId);
+
+            // Update posts state based on backend response structure
             setPosts(
-                posts.map((post) =>
-                    post._id === postId
-                        ? {
-                              ...post,
-                              likes: Array.isArray(post.likes)
-                                  ? post.likes.filter((id) => id !== user._id)
-                                  : [],
-                          }
-                        : post
-                )
+                posts.map((post) => {
+                    if (post._id === postId) {
+                        let updatedLikes;
+
+                        if (!post.likes || post.likes.length === 0) {
+                            // If likes is empty, return empty array
+                            updatedLikes = [];
+                        } else if (typeof post.likes[0] === "string") {
+                            // If likes is an array of IDs
+                            updatedLikes = post.likes.filter(
+                                (id) => id !== user._id
+                            );
+                        } else if (post.likes[0] && post.likes[0]._id) {
+                            // If likes is an array of user objects with _id
+                            updatedLikes = post.likes.filter(
+                                (like) => like._id !== user._id
+                            );
+                        } else if (post.likes[0] && post.likes[0].user) {
+                            // If likes is an array of objects with user property
+                            updatedLikes = post.likes.filter(
+                                (like) =>
+                                    (typeof like.user === "string" &&
+                                        like.user !== user._id) ||
+                                    like.user._id !== user._id
+                            );
+                        } else {
+                            // Default case
+                            updatedLikes = post.likes;
+                        }
+
+                        return {
+                            ...post,
+                            likes: updatedLikes,
+                        };
+                    }
+                    return post;
+                })
             );
         } catch (err) {
             console.error("Error unliking post:", err);
@@ -115,10 +210,15 @@ const Feed = () => {
 
         try {
             console.log(`Adding comment to post ${postId}: ${commentText}`);
-            const response = await postService.createPostComment(postId, {
+
+            // Use commentService instead of postService
+            const response = await commentService.createPostComment(postId, {
                 text: commentText,
             });
 
+            console.log("Comment response:", response);
+
+            // Update posts state with the new comment
             setPosts(
                 posts.map((post) =>
                     post._id === postId
@@ -138,7 +238,8 @@ const Feed = () => {
             return response.data;
         } catch (err) {
             console.error("Error adding comment:", err);
-            toast.error("Failed to add comment");
+            console.error("Error response:", err.response?.data);
+            toast.error(err.response?.data?.message || "Failed to add comment");
             throw err;
         }
     };
@@ -150,9 +251,6 @@ const Feed = () => {
     if (error) {
         return <ErrorMessage>{error}</ErrorMessage>;
     }
-
-    console.log("Rendering feed with posts:", posts);
-    console.log("Rendering feed with stories:", stories);
 
     return (
         <FeedContainer>
@@ -172,6 +270,7 @@ const Feed = () => {
                             onUnlike={handleUnlikePost}
                             onCommentSubmit={handleCommentSubmit}
                             currentUser={user}
+                            isLiked={isPostLikedByUser(post)} // Pass the liked status
                         />
                     ))
                 ) : (
